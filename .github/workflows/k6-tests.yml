@@ -1,0 +1,133 @@
+name: GoStyle k6 Performance & Security Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: "Select which k6 test to run"
+        required: true
+        default: "load"
+        type: choice
+        options:
+          - load
+          - security
+          - both
+
+jobs:
+  k6-tests:
+    name: Run GoStyle k6 Tests
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+    steps:
+      # ============================================
+      # CHECKOUT
+      # ============================================
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ============================================
+      # INSTALL K6
+      # ============================================
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      # ============================================
+      # VERIFY K6
+      # ============================================
+
+      - name: Check k6 Version
+        run: k6 version
+
+      # ============================================
+      # LOAD TEST
+      # ============================================
+
+      - name: Run Admin Login Load Test
+        if: ${{ inputs.test_type == 'load' || inputs.test_type == 'both' }}
+
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          EMAIL: ${{ secrets.GOSTYLE_EMAIL }}
+          PASSWORD: ${{ secrets.GOSTYLE_PASSWORD }}
+
+        run: |
+          echo "======================================"
+          echo "Starting GoStyle Admin Load Test"
+          echo "======================================"
+
+          k6 run \
+            --summary-export=k6-load-summary.json \
+            admin-login-test.js
+
+      # ============================================
+      # SECURITY TEST
+      # ============================================
+
+      - name: Run Admin Login Security Test
+        if: ${{ inputs.test_type == 'security' || inputs.test_type == 'both' }}
+
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          EMAIL: ${{ secrets.GOSTYLE_EMAIL }}
+          PASSWORD: ${{ secrets.GOSTYLE_PASSWORD }}
+
+        run: |
+          echo "======================================"
+          echo "Starting GoStyle Admin Security Test"
+          echo "======================================"
+
+          k6 run \
+            --summary-export=k6-security-summary.json \
+            gostyle-admin-login-security-test.js
+
+      # ============================================
+      # UPLOAD LOAD TEST RESULT
+      # ============================================
+
+      - name: Upload Load Test Result
+        if: ${{ always() && (inputs.test_type == 'load' || inputs.test_type == 'both') }}
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: gostyle-k6-load-test-result
+          path: |
+            k6-load-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ============================================
+      # UPLOAD SECURITY TEST RESULT
+      # ============================================
+
+      - name: Upload Security Test Result
+        if: ${{ always() && (inputs.test_type == 'security' || inputs.test_type == 'both') }}
+
+        uses: actions/upload-artifact@v4
+
+        with:
+          name: gostyle-k6-security-test-result
+          path: |
+            k6-security-summary.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ============================================
+      # FINAL MESSAGE
+      # ============================================
+
+      - name: Test Completed
+        if: always()
+
+        run: |
+          echo "======================================"
+          echo "GoStyle k6 Test Completed"
+          echo "======================================"
+          echo "Selected Test: ${{ inputs.test_type }}"
+          echo ""
+          echo "Check this GitHub Actions run for full k6 logs."
+          echo "Download the generated result from Artifacts."
