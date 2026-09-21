@@ -1,0 +1,22 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# k6 generated reports
+k6-load-report.html
+k6-load-summary.json
+k6-security-report.html
+k6-security-summary.json
+
+# Other test output
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node
+node_modules/
