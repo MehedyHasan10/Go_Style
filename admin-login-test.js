@@ -2,6 +2,9 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 import { Counter, Rate } from "k6/metrics";
 
+// HTML Report Generator
+import { htmlReport } from "https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js";
+
 // ======================================================
 // ENVIRONMENT
 // ======================================================
@@ -23,8 +26,11 @@ const roles200 = new Counter("roles_200");
 const roles429 = new Counter("roles_429");
 const rolesOtherErrors = new Counter("roles_other_errors");
 
-const rolesSuccessRate = new Rate("roles_success_rate");
-const roles429Rate = new Rate("roles_429_rate");
+const rolesSuccessRate =
+  new Rate("roles_success_rate");
+
+const roles429Rate =
+  new Rate("roles_429_rate");
 
 // ======================================================
 // LOAD CONFIGURATION
@@ -52,12 +58,13 @@ export const options = {
   ],
 
   thresholds: {
-    // 95% of Roles requests should complete under 1 second
+    // 95% of GET Roles requests should complete
+    // in less than 1 second
     "http_req_duration{name:GET Roles}": [
       "p(95)<1000",
     ],
 
-    // More than 99% should succeed
+    // More than 99% of Roles requests should succeed
     roles_success_rate: [
       "rate>0.99",
     ],
@@ -80,6 +87,7 @@ export function setup() {
     );
   }
 
+  console.log("");
   console.log("======================================");
   console.log("Logging in ONCE before load test...");
   console.log("======================================");
@@ -108,12 +116,19 @@ export function setup() {
     `LOGIN STATUS = ${loginResponse.status}`
   );
 
-  const loginSuccessful = check(loginResponse, {
-    "setup login successful": (r) =>
-      r.status === 200 ||
-      r.status === 201 ||
-      r.status === 204,
-  });
+  // ====================================================
+  // CHECK LOGIN
+  // ====================================================
+
+  const loginSuccessful = check(
+    loginResponse,
+    {
+      "setup login successful": (r) =>
+        r.status === 200 ||
+        r.status === 201 ||
+        r.status === 204,
+    }
+  );
 
   if (!loginSuccessful) {
     console.error(
@@ -121,7 +136,9 @@ export function setup() {
     );
 
     console.error(
-      `LOGIN BODY=${loginResponse.body.substring(0, 300)}`
+      `LOGIN BODY=${String(
+        loginResponse.body || ""
+      ).substring(0, 300)}`
     );
 
     throw new Error(
@@ -139,15 +156,15 @@ export function setup() {
     const body = loginResponse.json();
 
     token =
-      body.accessToken ||
-      body.access_token ||
-      body.token ||
-      body.data?.accessToken ||
-      body.data?.access_token ||
-      body.data?.token ||
+      body?.accessToken ||
+      body?.access_token ||
+      body?.token ||
+      body?.data?.accessToken ||
+      body?.data?.access_token ||
+      body?.data?.token ||
       null;
   } catch (error) {
-    // This application may use session cookies.
+    // Application may use session cookies instead.
   }
 
   // ====================================================
@@ -157,7 +174,8 @@ export function setup() {
   const cookies = [];
 
   for (const name in loginResponse.cookies) {
-    const values = loginResponse.cookies[name];
+    const values =
+      loginResponse.cookies[name];
 
     if (
       values &&
@@ -170,7 +188,12 @@ export function setup() {
     }
   }
 
-  const cookieHeader = cookies.join("; ");
+  const cookieHeader =
+    cookies.join("; ");
+
+  // ====================================================
+  // SHOW AUTH TYPE
+  // ====================================================
 
   if (token) {
     console.log(
@@ -190,6 +213,8 @@ export function setup() {
     "Login complete. Starting 10 VU load test..."
   );
 
+  console.log("");
+
   return {
     token,
     cookie: cookieHeader,
@@ -205,15 +230,22 @@ export default function (auth) {
     Accept: "application/json",
   };
 
-  // Bearer token
-  if (auth.token) {
+  // ====================================================
+  // BEARER TOKEN
+  // ====================================================
+
+  if (auth && auth.token) {
     headers.Authorization =
       `Bearer ${auth.token}`;
   }
 
-  // Session cookie
-  if (auth.cookie) {
-    headers.Cookie = auth.cookie;
+  // ====================================================
+  // SESSION COOKIE
+  // ====================================================
+
+  if (auth && auth.cookie) {
+    headers.Cookie =
+      auth.cookie;
   }
 
   // ====================================================
@@ -242,16 +274,12 @@ export default function (auth) {
 
     rolesSuccessRate.add(true);
     roles429Rate.add(false);
-  }
-
-  else if (response.status === 429) {
+  } else if (response.status === 429) {
     roles429.add(1);
 
     rolesSuccessRate.add(false);
     roles429Rate.add(true);
-  }
-
-  else {
+  } else {
     rolesOtherErrors.add(1);
 
     rolesSuccessRate.add(false);
@@ -279,7 +307,9 @@ export default function (auth) {
       }
 
       const contentType =
-        r.headers["Content-Type"] || "";
+        r.headers["Content-Type"] ||
+        r.headers["content-type"] ||
+        "";
 
       return contentType.includes(
         "application/json"
@@ -294,7 +324,15 @@ export default function (auth) {
       try {
         const body = r.json();
 
-        return Array.isArray(body.items);
+        // Supports:
+        // { items: [...] }
+        // { data: { items: [...] } }
+        // or direct array response
+        return (
+          Array.isArray(body) ||
+          Array.isArray(body?.items) ||
+          Array.isArray(body?.data?.items)
+        );
       } catch (error) {
         return false;
       }
@@ -305,7 +343,7 @@ export default function (auth) {
   // USER THINK TIME
   // ====================================================
 
-  // Each VU waits 1 second before next request.
+  // Each VU waits 1 second before the next request.
   sleep(1);
 }
 
@@ -314,6 +352,10 @@ export default function (auth) {
 // ======================================================
 
 export function handleSummary(data) {
+  // ====================================================
+  // TOTAL REQUEST COUNTS
+  // ====================================================
+
   const total200 =
     data.metrics.roles_200?.values?.count || 0;
 
@@ -321,30 +363,80 @@ export function handleSummary(data) {
     data.metrics.roles_429?.values?.count || 0;
 
   const totalOther =
-    data.metrics.roles_other_errors?.values?.count || 0;
+    data.metrics.roles_other_errors
+      ?.values?.count || 0;
 
   const total =
     total200 +
     total429 +
     totalOther;
 
+  // ====================================================
+  // RATES
+  // ====================================================
+
   const successPercent =
     total > 0
-      ? ((total200 / total) * 100).toFixed(2)
+      ? (
+          (total200 / total) *
+          100
+        ).toFixed(2)
       : "0.00";
 
   const rateLimitPercent =
     total > 0
-      ? ((total429 / total) * 100).toFixed(2)
+      ? (
+          (total429 / total) *
+          100
+        ).toFixed(2)
       : "0.00";
 
+  // ====================================================
+  // RESPONSE TIME
+  // ====================================================
+
+  const duration =
+    data.metrics[
+      "http_req_duration{name:GET Roles}"
+    ]?.values;
+
+  const avg =
+    duration?.avg?.toFixed(2) || "0.00";
+
+  const min =
+    duration?.min?.toFixed(2) || "0.00";
+
+  const med =
+    duration?.med?.toFixed(2) || "0.00";
+
+  const max =
+    duration?.max?.toFixed(2) || "0.00";
+
+  const p90 =
+    duration?.["p(90)"]?.toFixed(2) ||
+    "0.00";
+
+  const p95 =
+    duration?.["p(95)"]?.toFixed(2) ||
+    "0.00";
+
+  // ====================================================
+  // CONSOLE RESULT
+  // ====================================================
+
   console.log("");
-  console.log("======================================");
-  console.log("       GOSTYLE LOAD TEST RESULT");
-  console.log("======================================");
+  console.log(
+    "======================================"
+  );
+  console.log(
+    "       GOSTYLE LOAD TEST RESULT"
+  );
+  console.log(
+    "======================================"
+  );
 
   console.log(
-    `Concurrent Users : 10`
+    "Concurrent Users : 10"
   );
 
   console.log(
@@ -371,9 +463,66 @@ export function handleSummary(data) {
     `429 Rate         : ${rateLimitPercent}%`
   );
 
-  console.log("======================================");
+  console.log(
+    "--------------------------------------"
+  );
+
+  console.log(
+    `Average Response : ${avg} ms`
+  );
+
+  console.log(
+    `Minimum Response : ${min} ms`
+  );
+
+  console.log(
+    `Median Response  : ${med} ms`
+  );
+
+  console.log(
+    `Maximum Response : ${max} ms`
+  );
+
+  console.log(
+    `P90 Response     : ${p90} ms`
+  );
+
+  console.log(
+    `P95 Response     : ${p95} ms`
+  );
+
+  console.log(
+    "======================================"
+  );
+
+  console.log(
+    "HTML Report: k6-load-report.html"
+  );
+
+  console.log(
+    "JSON Report: k6-load-summary.json"
+  );
+
+  console.log(
+    "======================================"
+  );
+
+  // ====================================================
+  // GENERATE REPORTS
+  // ====================================================
 
   return {
-    stdout: JSON.stringify(data, null, 2),
+    "k6-load-report.html": htmlReport(data),
+
+    "k6-load-summary.json":
+      JSON.stringify(data, null, 2),
+
+    stdout:
+      "\nGoStyle load test completed.\n" +
+      `Requests: ${total}\n` +
+      `HTTP 200: ${total200}\n` +
+      `HTTP 429: ${total429}\n` +
+      `Success Rate: ${successPercent}%\n` +
+      `P95: ${p95} ms\n`,
   };
 }
